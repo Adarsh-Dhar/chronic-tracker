@@ -102,19 +102,45 @@ export default function TrackPage() {
 
     setIsSubmitting(true)
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    try {
+      // Send data to API endpoint
+      const response = await fetch('/api/symptom-logs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          symptomText,
+          painLevel: painLevel[0], // Get the first value from the array
+          triggers,
+        }),
+      })
 
-    toast({
-      title: "Symptoms logged successfully",
-      description: "Your health data has been saved and analyzed",
-    })
+      const result = await response.json()
 
-    // Reset form
-    setSymptomText("")
-    setPainLevel([5])
-    setTriggers([])
-    setIsSubmitting(false)
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to save symptom log')
+      }
+
+      toast({
+        title: "Symptoms logged successfully",
+        description: "Your health data has been saved to the database",
+      })
+
+      // Reset form
+      setSymptomText("")
+      setPainLevel([5])
+      setTriggers([])
+    } catch (error) {
+      console.error('Error saving symptom log:', error)
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to save your symptom log",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const formatTime = (seconds: number) => {
