@@ -17,6 +17,8 @@ import {
   AlertTriangle,
   Download,
   RefreshCw,
+  Stethoscope,
+  FileText
 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 
@@ -50,6 +52,9 @@ export default function InsightsPage() {
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(true)
   const [activeTab, setActiveTab] = useState("trends")
+  const [doctorReport, setDoctorReport] = useState<string>('')
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
 
   useEffect(() => {
     // Simulate loading data
@@ -77,6 +82,57 @@ export default function InsightsPage() {
         description: "Your health insights have been refreshed",
       })
     }, 2000)
+  }
+  
+  const generateDoctorReport = async () => {
+    setReportLoading(true)
+    setReportError(null)
+    setDoctorReport('')
+    
+    try {
+      console.log('Fetching doctor visit preparation report...')
+      const response = await fetch('/api/analyze')
+      console.log('API response status:', response.status)
+      
+      const responseText = await response.text()
+      console.log('Raw API response:', responseText.substring(0, 100) + '...')
+      
+      let data
+      try {
+        data = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error('Error parsing JSON response:', parseError)
+        throw new Error('Invalid response format from server')
+      }
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to analyze symptom logs')
+      }
+      
+      if (!data.data) {
+        console.error('Missing data in response:', data)
+        throw new Error('Invalid response format: missing data field')
+      }
+      
+      console.log('Setting doctor report data')
+      setDoctorReport(data.data)
+      
+      toast({
+        title: "Report Generated",
+        description: "Your doctor visit preparation report is ready",
+      })
+    } catch (err: any) {
+      setReportError(err.message || 'An error occurred while analyzing your symptom logs')
+      console.error('Error fetching doctor report:', err)
+      
+      toast({
+        title: "Error",
+        description: err.message || "Failed to generate doctor visit report",
+        variant: "destructive"
+      })
+    } finally {
+      setReportLoading(false)
+    }
   }
 
   return (
@@ -108,7 +164,7 @@ export default function InsightsPage() {
       </motion.div>
 
       <Tabs defaultValue="trends" value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid grid-cols-3 md:w-[400px]">
+        <TabsList className="grid grid-cols-4 md:w-[500px]">
           <TabsTrigger value="trends">
             <LineChartIcon className="mr-2 h-4 w-4" />
             Trends
@@ -120,6 +176,10 @@ export default function InsightsPage() {
           <TabsTrigger value="similar">
             <BarChart2 className="mr-2 h-4 w-4" />
             Similar Cases
+          </TabsTrigger>
+          <TabsTrigger value="doctor">
+            <Stethoscope className="mr-2 h-4 w-4" />
+            Doctor Prep
           </TabsTrigger>
         </TabsList>
 
@@ -528,7 +588,132 @@ export default function InsightsPage() {
             </Card>
           </motion.div>
         </TabsContent>
+        
+        <TabsContent value="doctor" className="space-y-6">
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Stethoscope className="h-5 w-5 text-primary" />
+                  Doctor Visit Preparation
+                </CardTitle>
+                <CardDescription>
+                  AI-generated questions and discussion topics based on your symptom patterns
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="mb-6">
+                  <p className="text-muted-foreground mb-4">
+                    This tool analyzes your symptom logs and generates personalized questions and discussion topics 
+                    for your next doctor visit. It identifies patterns in your symptoms, pain levels, and triggers 
+                    to help you have more productive medical appointments.
+                  </p>
+                  
+                  <Button
+                    onClick={generateDoctorReport}
+                    disabled={reportLoading}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors disabled:opacity-50"
+                  >
+                    {reportLoading ? (
+                      <>
+                        <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>
+                        <FileText className="mr-2 h-4 w-4" />
+                        Generate Doctor Visit Report
+                      </>
+                    )}
+                  </Button>
+                </div>
+                
+                {reportError && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md mb-6">
+                    {reportError}
+                  </div>
+                )}
+                
+                {reportLoading && (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                  </div>
+                )}
+                
+                {doctorReport && !reportLoading && (
+                  <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-6">
+                    <div className="prose max-w-none">
+                      {/* Render the markdown content */}
+                      <div dangerouslySetInnerHTML={{ __html: markdownToHtml(doctorReport) }} />
+                    </div>
+                  </div>
+                )}
+                
+                {!doctorReport && !reportLoading && !reportError && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center text-gray-500">
+                    Click the "Generate Doctor Visit Report" button to create a personalized report based on your symptom logs.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        </TabsContent>
       </Tabs>
     </div>
   )
+}
+
+// Enhanced markdown to HTML converter for the AI response format
+function markdownToHtml(markdown: string): string {
+  if (!markdown) return '<p>No analysis data available</p>';
+  
+  console.log('Converting markdown to HTML:', markdown.substring(0, 100) + '...');
+  
+  try {
+    // Process the markdown in sections to better handle the AI response format
+    let html = markdown
+      // Convert headers
+      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+      
+      // Convert bold
+      .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
+      
+      // Convert italic
+      .replace(/\*(.*?)\*/gim, '<em>$1</em>')
+      
+      // Convert lists - handle both unordered and ordered lists
+      .replace(/^\s*\- (.*$)/gim, '<li>$1</li>')
+      .replace(/^\s*\d+\. (.*$)/gim, '<li>$1</li>');
+    
+    // Process sections
+    const sections = html.split(/\n\n+/);
+    let processedHtml = '';
+    
+    sections.forEach(section => {
+      if (section.trim() === '') return;
+      
+      // Check if this section is a list
+      if (section.includes('<li>')) {
+        processedHtml += `<ul>${section}</ul>`;
+      } 
+      // Check if this is a header
+      else if (section.startsWith('<h')) {
+        processedHtml += section;
+      } 
+      // Otherwise treat as paragraph
+      else {
+        processedHtml += `<p>${section.replace(/\n/g, '<br>')}</p>`;
+      }
+    });
+    
+    console.log('Processed HTML length:', processedHtml.length);
+    return processedHtml || '<p>Unable to format analysis results</p>';
+  } catch (error) {
+    console.error('Error converting markdown to HTML:', error);
+    // Handle the unknown error type safely
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return `<p>Error formatting analysis: ${errorMessage}</p><pre>${markdown}</pre>`;
+  }
 }

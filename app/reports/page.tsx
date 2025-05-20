@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { motion } from "framer-motion"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -29,25 +29,157 @@ const medicationData = [
   { name: "Medication C", adherence: 100 },
 ]
 
+// Markdown to HTML converter for the report content
+function markdownToHtml(markdown: string): string {
+  if (!markdown) return '<p>No report data available</p>';
+  
+  try {
+    // Process the markdown in sections to better handle the AI response format
+    let html = markdown
+      // Convert headers
+      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+      
+      // Convert bold
+      .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
+      
+      // Convert italic
+      .replace(/\*(.*?)\*/gim, '<em>$1</em>')
+      
+      // Convert lists - handle both unordered and ordered lists
+      .replace(/^\s*\- (.*$)/gim, '<li>$1</li>')
+      .replace(/^\s*\d+\. (.*$)/gim, '<li>$1</li>');
+    
+    // Process sections
+    const sections = html.split(/\n\n+/);
+    let processedHtml = '';
+    
+    sections.forEach(section => {
+      if (section.trim() === '') return;
+      
+      // Check if this section is a list
+      if (section.includes('<li>')) {
+        processedHtml += `<ul class="list-disc pl-5 my-4">${section}</ul>`;
+      } 
+      // Check if this is a header
+      else if (section.startsWith('<h')) {
+        processedHtml += section;
+      } 
+      // Otherwise treat as paragraph
+      else {
+        processedHtml += `<p class="my-3">${section.replace(/\n/g, '<br>')}</p>`;
+      }
+    });
+    
+    return processedHtml || '<p>Unable to format report results</p>';
+  } catch (error) {
+    console.error('Error converting markdown to HTML:', error);
+    // Handle the unknown error type safely
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return `<p>Error formatting report: ${errorMessage}</p><pre>${markdown}</pre>`;
+  }
+}
+
 export default function ReportsPage() {
   const { toast } = useToast()
   const [isGenerating, setIsGenerating] = useState(false)
   const [reportGenerated, setReportGenerated] = useState(false)
   const [timeRange, setTimeRange] = useState("week")
+  const [reportType, setReportType] = useState("comprehensive")
+  const [selectedSections, setSelectedSections] = useState([
+    "symptom_timeline",
+    "medication_adherence",
+    "trigger_analysis",
+    "ai_insights",
+    "similar_cases",
+    "treatment_recommendations",
+  ])
+  const [reportContent, setReportContent] = useState<string>('')
+  const [error, setError] = useState<string | null>(null)
 
-  const generateReport = () => {
+  // Map UI values to API parameters
+  const mapTimeRangeToApiParam = (range: string) => {
+    switch (range) {
+      case 'week': return 'past_week'
+      case 'month': return 'past_month'
+      case '3months': return 'past_3_months'
+      default: return 'past_week'
+    }
+  }
+
+  const mapReportTypeToApiParam = (type: string) => {
+    switch (type) {
+      case 'comprehensive': return 'comprehensive'
+      case 'medication': return 'medication'
+      case 'trends': return 'symptom_timeline'
+      case 'summary': return 'doctor_visit'
+      default: return 'comprehensive'
+    }
+  }
+
+  const toggleSection = (section: string) => {
+    setSelectedSections(prev => {
+      if (prev.includes(section)) {
+        return prev.filter(s => s !== section)
+      } else {
+        return [...prev, section]
+      }
+    })
+  }
+
+  const generateReport = async () => {
     setIsGenerating(true)
-
-    // Simulate report generation
-    setTimeout(() => {
-      setIsGenerating(false)
+    setError(null)
+    setReportContent('')
+    
+    try {
+      // Prepare API parameters
+      const timePeriod = mapTimeRangeToApiParam(timeRange)
+      const apiReportType = mapReportTypeToApiParam(reportType)
+      
+      // Build URL with query parameters
+      let url = `/api/analyze?timePeriod=${timePeriod}&reportType=${apiReportType}`
+      
+      // Add sections parameters
+      selectedSections.forEach(section => {
+        url += `&sections=${section}`
+      })
+      
+      console.log('Fetching report with URL:', url)
+      
+      const response = await fetch(url)
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to generate report')
+      }
+      
+      const data = await response.json()
+      
+      if (!data.data) {
+        throw new Error('Invalid response format: missing data field')
+      }
+      
+      setReportContent(data.data)
       setReportGenerated(true)
-
+      
       toast({
         title: "Report Generated",
         description: "Your doctor-ready report has been created",
       })
-    }, 2500)
+    } catch (err: any) {
+      setError(err.message || 'An error occurred while generating the report')
+      console.error('Error generating report:', err)
+      
+      toast({
+        title: "Error",
+        description: err.message || "Failed to generate report",
+        variant: "destructive"
+      })
+    } finally {
+      setIsGenerating(false)
+    }
   }
 
   const shareReport = () => {
@@ -68,7 +200,7 @@ export default function ReportsPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         <motion.div
-          className="lg:col-span-2"
+          className={reportGenerated && reportContent ? "lg:col-span-3" : "lg:col-span-2"}
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5, delay: 0.1 }}
@@ -98,7 +230,7 @@ export default function ReportsPage() {
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Report Type</label>
-                  <Select defaultValue="comprehensive">
+                  <Select defaultValue="comprehensive" onValueChange={setReportType}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select report type" />
                     </SelectTrigger>
@@ -116,28 +248,35 @@ export default function ReportsPage() {
                 <label className="text-sm font-medium">Include Sections</label>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    "Symptom Timeline",
-                    "Medication Adherence",
-                    "Trigger Analysis",
-                    "AI Insights",
-                    "Similar Cases",
-                    "Treatment Recommendations",
+                    { label: "Symptom Timeline", value: "symptom_timeline" },
+                    { label: "Medication Adherence", value: "medication_adherence" },
+                    { label: "Trigger Analysis", value: "trigger_analysis" },
+                    { label: "AI Insights", value: "ai_insights" },
+                    { label: "Similar Cases", value: "similar_cases" },
+                    { label: "Treatment Recommendations", value: "treatment_recommendations" },
                   ].map((section, index) => (
                     <div key={index} className="flex items-center space-x-2">
                       <input
                         type="checkbox"
-                        id={`section-${index}`}
-                        defaultChecked
+                        id={`section-${section.value}`}
+                        checked={selectedSections.includes(section.value)}
+                        onChange={() => toggleSection(section.value)}
                         className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
                       />
-                      <label htmlFor={`section-${index}`} className="text-sm">
-                        {section}
+                      <label htmlFor={`section-${section.value}`} className="text-sm">
+                        {section.label}
                       </label>
                     </div>
                   ))}
                 </div>
               </div>
 
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md mb-4">
+                  {error}
+                </div>
+              )}
+              
               <Button className="w-full" size="lg" onClick={generateReport} disabled={isGenerating}>
                 {isGenerating ? (
                   <>
@@ -155,469 +294,91 @@ export default function ReportsPage() {
           </Card>
         </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-        >
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Reports</CardTitle>
-              <CardDescription>Previously generated reports</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {[
-                { date: "May 15, 2025", title: "Monthly Summary", doctor: "Dr. Johnson" },
-                { date: "April 10, 2025", title: "Quarterly Review", doctor: "Dr. Smith" },
-                { date: "March 5, 2025", title: "Medication Report", doctor: "Dr. Johnson" },
-              ].map((report, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, delay: 0.1 * index }}
-                >
-                  <div className="border rounded-lg p-3 hover:bg-accent transition-colors">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="font-medium">{report.title}</span>
-                      <Badge variant="outline">{report.date}</Badge>
+        {!reportGenerated && (
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+          >
+            <Card>
+              <CardHeader>
+                <CardTitle>Recent Reports</CardTitle>
+                <CardDescription>Previously generated reports</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {[
+                  { date: "May 15, 2025", title: "Monthly Summary", doctor: "Dr. Johnson" },
+                  { date: "April 10, 2025", title: "Quarterly Review", doctor: "Dr. Smith" },
+                  { date: "March 5, 2025", title: "Medication Report", doctor: "Dr. Johnson" },
+                ].map((report, index) => (
+                  <motion.div
+                    key={index}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, delay: 0.1 * index }}
+                  >
+                    <div className="border rounded-lg p-3 hover:bg-accent transition-colors">
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="font-medium">{report.title}</span>
+                        <Badge variant="outline">{report.date}</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-2">Sent to: {report.doctor}</p>
+                      <div className="flex gap-2">
+                        <Button variant="ghost" size="sm" className="h-8 px-2">
+                          <Download className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-8 px-2">
+                          <Send className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                    <p className="text-sm text-muted-foreground mb-2">Sent to: {report.doctor}</p>
-                    <div className="flex gap-2">
-                      <Button variant="ghost" size="sm" className="h-8 px-2">
-                        <Download className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-8 px-2">
-                        <Send className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
+                  </motion.div>
+                ))}
 
-              <Button variant="outline" className="w-full">
-                View All Reports
-              </Button>
-            </CardContent>
-          </Card>
-        </motion.div>
-      </div>
-
-      {reportGenerated && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="space-y-6"
-        >
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold">Generated Report</h2>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm">
-                <Printer className="mr-2 h-4 w-4" />
-                Print
-              </Button>
-              <Button variant="outline" size="sm">
-                <Download className="mr-2 h-4 w-4" />
-                Download PDF
-              </Button>
-              <Button size="sm" onClick={shareReport}>
-                <Send className="mr-2 h-4 w-4" />
-                Share with Doctor
-              </Button>
-            </div>
-          </div>
-
-          <Card className="border-2 border-primary/20">
-            <CardHeader className="bg-primary/5 border-b">
-              <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+                <Button variant="outline" className="w-full">
+                  View All Reports
+                </Button>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+        
+        {reportGenerated && reportContent && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="mt-6 w-full"
+          >
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <div>
-                  <CardTitle className="text-2xl">Health Summary Report</CardTitle>
-                  <CardDescription className="text-base">Generated on May 20, 2025</CardDescription>
+                  <CardTitle>Generated Report</CardTitle>
+                  <CardDescription>
+                    {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                  </CardDescription>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <Badge variant="outline" className="flex items-center gap-1">
-                    <Calendar className="h-3 w-3" />
-                    {timeRange === "week"
-                      ? "Past 7 Days"
-                      : timeRange === "month"
-                        ? "Past 30 Days"
-                        : timeRange === "3months"
-                          ? "Past 90 Days"
-                          : timeRange === "6months"
-                            ? "Past 180 Days"
-                            : "Past 365 Days"}
-                  </Badge>
-                  <Badge variant="outline" className="flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    Last Updated: Today, 11:10 PM
-                  </Badge>
+                <div className="flex space-x-2">
+                  <Button variant="outline" size="sm" onClick={() => window.print()}>
+                    <Printer className="h-4 w-4 mr-1" />
+                    Print
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={shareReport}>
+                    <Mail className="h-4 w-4 mr-1" />
+                    Email
+                  </Button>
                 </div>
-              </div>
-            </CardHeader>
-
-            <CardContent className="pt-6 space-y-8">
-              <div className="space-y-4">
-                <h3 className="text-xl font-bold flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-primary" />
-                  Patient Information
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Name</p>
-                    <p className="font-medium">Jane Doe</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Date of Birth</p>
-                    <p className="font-medium">01/15/1985</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Primary Condition</p>
-                    <p className="font-medium">Rheumatoid Arthritis</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Primary Physician</p>
-                    <p className="font-medium">Dr. Johnson</p>
-                  </div>
+              </CardHeader>
+              <CardContent>
+                <div className="prose max-w-none">
+                  {/* Render the markdown content */}
+                  <div dangerouslySetInnerHTML={{ __html: markdownToHtml(reportContent) }} />
                 </div>
-              </div>
-
-              <Tabs defaultValue="timeline" className="space-y-4">
-                <TabsList>
-                  <TabsTrigger value="timeline">Symptom Timeline</TabsTrigger>
-                  <TabsTrigger value="medications">Medications</TabsTrigger>
-                  <TabsTrigger value="insights">AI Insights</TabsTrigger>
-                  <TabsTrigger value="recommendations">Recommendations</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="timeline" className="space-y-4">
-                  <div className="h-[300px]">
-                    <LineChart
-                      data={painData}
-                      index="date"
-                      categories={["value"]}
-                      colors={["#8b5cf6"]}
-                      valueFormatter={(value) => `${value}/10`}
-                      yAxisWidth={30}
-                    />
-                  </div>
-
-                  <Accordion type="single" collapsible className="w-full">
-                    <AccordionItem value="item-1">
-                      <AccordionTrigger>Symptom Details</AccordionTrigger>
-                      <AccordionContent>
-                        <div className="space-y-4">
-                          <div className="border-b pb-2">
-                            <p className="font-medium">May 20, 2025</p>
-                            <p className="text-sm">Migraine with nausea, rated 5/10 severity</p>
-                            <p className="text-sm text-muted-foreground">Triggers: Stress, Weather change</p>
-                          </div>
-                          <div className="border-b pb-2">
-                            <p className="font-medium">May 19, 2025</p>
-                            <p className="text-sm">Mild joint pain, rated 3/10 severity</p>
-                            <p className="text-sm text-muted-foreground">Triggers: None identified</p>
-                          </div>
-                          <div className="border-b pb-2">
-                            <p className="font-medium">May 18, 2025</p>
-                            <p className="text-sm">Fatigue and dizziness, rated 4/10 severity</p>
-                            <p className="text-sm text-muted-foreground">Triggers: Poor sleep</p>
-                          </div>
-                          <div className="border-b pb-2">
-                            <p className="font-medium">May 17, 2025</p>
-                            <p className="text-sm">Joint pain in knees, rated 6/10 severity</p>
-                            <p className="text-sm text-muted-foreground">Triggers: Physical activity</p>
-                          </div>
-                        </div>
-                      </AccordionContent>
-                    </AccordionItem>
-
-                    <AccordionItem value="item-2">
-                      <AccordionTrigger>Pattern Analysis</AccordionTrigger>
-                      <AccordionContent>
-                        <div className="space-y-3">
-                          <p>
-                            Symptom patterns show a 35% decrease in overall severity over the past week, with most
-                            significant improvement in joint pain.
-                          </p>
-                          <p>Morning symptoms (7-9 AM) are 40% more frequent than other times of day.</p>
-                          <p>Weather changes correlate with symptom flares in 78% of recorded instances.</p>
-                        </div>
-                      </AccordionContent>
-                    </AccordionItem>
-                  </Accordion>
-                </TabsContent>
-
-                <TabsContent value="medications" className="space-y-4">
-                  <div className="h-[300px]">
-                    <BarChart
-                      data={medicationData}
-                      index="name"
-                      categories={["adherence"]}
-                      colors={["#8b5cf6"]}
-                      valueFormatter={(value) => `${value}%`}
-                      yAxisWidth={30}
-                    />
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <Card>
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-base">Medication A</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="space-y-1">
-                            <div className="flex justify-between">
-                              <p className="text-sm text-muted-foreground">Dosage</p>
-                              <p className="text-sm">10mg</p>
-                            </div>
-                            <div className="flex justify-between">
-                              <p className="text-sm text-muted-foreground">Frequency</p>
-                              <p className="text-sm">Twice daily</p>
-                            </div>
-                            <div className="flex justify-between">
-                              <p className="text-sm text-muted-foreground">Adherence</p>
-                              <p className="text-sm font-medium text-green-600">95%</p>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-
-                      <Card>
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-base">Medication B</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="space-y-1">
-                            <div className="flex justify-between">
-                              <p className="text-sm text-muted-foreground">Dosage</p>
-                              <p className="text-sm">25mg</p>
-                            </div>
-                            <div className="flex justify-between">
-                              <p className="text-sm text-muted-foreground">Frequency</p>
-                              <p className="text-sm">Once daily</p>
-                            </div>
-                            <div className="flex justify-between">
-                              <p className="text-sm text-muted-foreground">Adherence</p>
-                              <p className="text-sm font-medium text-amber-600">85%</p>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-
-                      <Card>
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-base">Medication C</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="space-y-1">
-                            <div className="flex justify-between">
-                              <p className="text-sm text-muted-foreground">Dosage</p>
-                              <p className="text-sm">50mg</p>
-                            </div>
-                            <div className="flex justify-between">
-                              <p className="text-sm text-muted-foreground">Frequency</p>
-                              <p className="text-sm">As needed</p>
-                            </div>
-                            <div className="flex justify-between">
-                              <p className="text-sm text-muted-foreground">Adherence</p>
-                              <p className="text-sm font-medium text-green-600">100%</p>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-
-                    <div className="border rounded-lg p-4 bg-primary/5">
-                      <p className="font-medium mb-2">Medication Notes</p>
-                      <p className="text-sm">
-                        Patient reports mild stomach discomfort with Medication B when taken without food. Medication C
-                        has been effective for acute symptom management with no reported side effects. Overall
-                        medication effectiveness rating: 7/10.
-                      </p>
-                    </div>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="insights" className="space-y-4">
-                  <div className="border rounded-lg p-4 bg-primary/5">
-                    <h4 className="font-bold text-lg mb-2">AI-Generated Insights</h4>
-                    <div className="space-y-4">
-                      <div>
-                        <p className="font-medium">Symptom Patterns</p>
-                        <p className="text-sm">
-                          Analysis shows a strong correlation (78%) between barometric pressure changes and symptom
-                          flares. Symptoms are 40% more likely to occur in the morning, particularly between 7-9 AM.
-                          Overall symptom severity has decreased by 35% over the reporting period.
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="font-medium">Treatment Response</p>
-                        <p className="text-sm">
-                          Current medication regimen shows moderate effectiveness (7/10) with best response to
-                          Medication C for acute management. Stress management techniques have contributed to a 25%
-                          reduction in flare frequency. Sleep quality improvements correlate with reduced morning
-                          symptom severity.
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="font-medium">Similar Cases Analysis</p>
-                        <p className="text-sm">
-                          Based on 1,248 similar cases from CDC and WHO databases: 65% of similar patients saw
-                          significant improvement with biologic medications. 72% experienced reduced flare frequency
-                          with regular stress management techniques. 58% reported moderate to significant improvement
-                          after adopting an anti-inflammatory diet.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="border rounded-lg p-4">
-                    <h4 className="font-bold text-lg mb-2">Talking Points for Your Doctor</h4>
-                    <ul className="space-y-2">
-                      <li className="flex items-start gap-2">
-                        <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                          <span className="text-primary text-xs">1</span>
-                        </div>
-                        <span>
-                          Discuss potential for biologic therapy options – 65% of similar patients saw improvement
-                        </span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                          <span className="text-primary text-xs">2</span>
-                        </div>
-                        <span>Review timing of medication administration to better address morning symptoms</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                          <span className="text-primary text-xs">3</span>
-                        </div>
-                        <span>Inquire about anti-inflammatory diet protocols with nutritional counseling</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                          <span className="text-primary text-xs">4</span>
-                        </div>
-                        <span>Address mild stomach discomfort with Medication B</span>
-                      </li>
-                    </ul>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="recommendations" className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-base">Lifestyle Recommendations</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <ul className="space-y-2">
-                          <li className="flex items-start gap-2">
-                            <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                              <span className="text-primary text-xs">1</span>
-                            </div>
-                            <span>Maintain consistent sleep schedule (7-8 hours)</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                              <span className="text-primary text-xs">2</span>
-                            </div>
-                            <span>Continue daily 15-minute meditation practice</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                              <span className="text-primary text-xs">3</span>
-                            </div>
-                            <span>Avoid known dietary triggers (caffeine, processed foods)</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                              <span className="text-primary text-xs">4</span>
-                            </div>
-                            <span>Monitor barometric pressure changes and prepare accordingly</span>
-                          </li>
-                        </ul>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-base">Treatment Considerations</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <ul className="space-y-2">
-                          <li className="flex items-start gap-2">
-                            <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                              <span className="text-primary text-xs">1</span>
-                            </div>
-                            <span>Consider biologic therapy options (65% effective in similar cases)</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                              <span className="text-primary text-xs">2</span>
-                            </div>
-                            <span>Adjust medication timing to better address morning symptoms</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                              <span className="text-primary text-xs">3</span>
-                            </div>
-                            <span>Explore anti-inflammatory diet with nutritional counseling</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center mt-0.5 shrink-0">
-                              <span className="text-primary text-xs">4</span>
-                            </div>
-                            <span>Consider specialized physical therapy (42% effective in similar cases)</span>
-                          </li>
-                        </ul>
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  <div className="border rounded-lg p-4 bg-primary/5">
-                    <h4 className="font-bold text-lg mb-2">Long-Term Outlook</h4>
-                    <p className="text-sm">
-                      Based on your symptom patterns and treatment response, our AI predicts a gradual improvement in
-                      your condition over the next 3-6 months. The model indicates a 75% probability of reducing your
-                      average symptom severity from 6/10 to 2/10 by November if current treatment and lifestyle
-                      modifications are maintained.
-                    </p>
-                    <p className="text-sm mt-2">
-                      The most significant improvements are expected in pain levels, while fatigue may take longer to
-                      resolve completely. This prediction has a confidence level of 82% based on analysis of similar
-                      cases in our database.
-                    </p>
-                  </div>
-                </TabsContent>
-              </Tabs>
-            </CardContent>
-
-            <CardFooter className="border-t pt-6 flex flex-col sm:flex-row justify-between gap-4">
-              <div className="text-sm text-muted-foreground">
-                <p>Generated by HealthTrack AI on May 20, 2025</p>
-                <p>
-                  This report is intended for informational purposes and should be reviewed by a healthcare
-                  professional.
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm">
-                  <Mail className="mr-2 h-4 w-4" />
-                  Email
-                </Button>
-                <Button variant="outline" size="sm">
-                  <Share2 className="mr-2 h-4 w-4" />
-                  Share
-                </Button>
-              </div>
-            </CardFooter>
-          </Card>
-        </motion.div>
-      )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </div>
     </div>
   )
 }
