@@ -22,6 +22,8 @@ export default function TrackPage() {
   const [newTrigger, setNewTrigger] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
+  const [recentLogs, setRecentLogs] = useState<any[]>([])
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
 
   // Mock recording functionality
@@ -70,8 +72,34 @@ export default function TrackPage() {
     }, 1000)
   }
 
-  // Clean up timer on unmount
+  // Fetch recent logs
+  const fetchRecentLogs = async () => {
+    setIsLoadingLogs(true)
+    try {
+      const response = await fetch('/api/track')
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to fetch logs')
+      }
+      
+      setRecentLogs(result.data || [])
+    } catch (error) {
+      console.error('Error fetching logs:', error)
+      toast({
+        title: "Error",
+        description: "Failed to load recent logs",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoadingLogs(false)
+    }
+  }
+
+  // Clean up timer on unmount and fetch logs on mount
   useEffect(() => {
+    fetchRecentLogs()
+    
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current)
@@ -104,7 +132,7 @@ export default function TrackPage() {
 
     try {
       // Send data to API endpoint
-      const response = await fetch('/api/symptom-logs', {
+      const response = await fetch('/api/track', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -131,6 +159,9 @@ export default function TrackPage() {
       setSymptomText("")
       setPainLevel([5])
       setTriggers([])
+      
+      // Refresh the logs list
+      fetchRecentLogs()
     } catch (error) {
       console.error('Error saving symptom log:', error)
       toast({
@@ -300,26 +331,40 @@ export default function TrackPage() {
               <CardDescription>Your most recent symptom entries</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {[
-                { date: "Today, 8:30 AM", symptom: "Migraine with nausea", severity: 7 },
-                { date: "Yesterday, 9:15 PM", symptom: "Joint pain in knees", severity: 5 },
-                { date: "May 18, 2025", symptom: "Fatigue and dizziness", severity: 6 },
-              ].map((log, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, delay: 0.1 * index }}
-                >
-                  <div className="border rounded-lg p-3 hover:bg-accent transition-colors">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="font-medium">{log.symptom}</span>
-                      <Badge variant={log.severity > 6 ? "destructive" : "outline"}>{log.severity}/10</Badge>
+              {isLoadingLogs ? (
+                <div className="flex justify-center py-8">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                </div>
+              ) : recentLogs.length > 0 ? (
+                recentLogs.map((log, index) => (
+                  <motion.div
+                    key={log.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, delay: 0.1 * index }}
+                  >
+                    <div className="border rounded-lg p-3 hover:bg-accent transition-colors">
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="font-medium">{log.symptomText}</span>
+                        <Badge variant={log.painLevel > 6 ? "destructive" : "outline"}>{log.painLevel}/10</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {new Date(log.createdAt).toLocaleString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </p>
                     </div>
-                    <p className="text-sm text-muted-foreground">{log.date}</p>
-                  </div>
-                </motion.div>
-              ))}
+                  </motion.div>
+                ))
+              ) : (
+                <div className="text-center py-6 text-muted-foreground">
+                  No symptom logs found. Start tracking your symptoms today.
+                </div>
+              )}
 
               <Button variant="outline" className="w-full">
                 View All History
