@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/components/ui/use-toast"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useRouter } from "next/navigation"
 
 type Term = {
   original: string
@@ -24,11 +25,13 @@ type SynonymsResponse = {
 
 export default function SynonymsPage() {
   const { toast } = useToast()
+  const router = useRouter()
   const [symptomText, setSymptomText] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [synonyms, setSynonyms] = useState<SynonymsResponse | null>(null)
   const [searchHistory, setSearchHistory] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState("medical")
+  const [selectedTerms, setSelectedTerms] = useState<string[]>([])
 
   // Load search history from local storage on component mount
   useEffect(() => {
@@ -106,6 +109,29 @@ export default function SynonymsPage() {
       description: `"${text}" copied to clipboard`,
     })
   }
+  
+  const toggleTermSelection = (term: string) => {
+    if (selectedTerms.includes(term)) {
+      setSelectedTerms(selectedTerms.filter(t => t !== term))
+    } else {
+      setSelectedTerms([...selectedTerms, term])
+    }
+  }
+  
+  const searchDatasets = () => {
+    if (selectedTerms.length === 0) {
+      toast({
+        title: "No terms selected",
+        description: "Please select at least one term to search for",
+        variant: "destructive",
+      })
+      return
+    }
+    
+    // Encode the selected terms as a URL parameter
+    const termsParam = encodeURIComponent(JSON.stringify(selectedTerms))
+    router.push(`/search-results?terms=${termsParam}`)
+  }
 
   // Count total terms across all categories
   const getTotalTermCount = () => {
@@ -155,7 +181,12 @@ export default function SynonymsPage() {
                     }
                   }}
                 />
-                <p className="text-xs text-muted-foreground">Press Ctrl+Enter to search</p>
+                <div className="flex justify-between items-center">
+                  <p className="text-xs text-muted-foreground">Press Ctrl+Enter to search</p>
+                  {selectedTerms.length > 0 && (
+                    <p className="text-xs text-primary">{selectedTerms.length} terms selected for dataset search</p>
+                  )}
+                </div>
               </div>
 
               <Button 
@@ -209,23 +240,35 @@ export default function SynonymsPage() {
                     {synonyms ? `Found ${getTotalTermCount()} related terms` : "Enter symptoms to see related medical terms"}
                   </CardDescription>
                 </div>
-                {synonyms && (
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => {
-                      const allTerms = synonyms.terms.flatMap(term => [
-                        ...term.medicalTerms || [],
-                        ...term.commonNames || [],
-                        ...term.relatedConditions || [],
-                        ...term.variations || []
-                      ]).join(", ")
-                      copyToClipboard(allTerms)
-                    }}
-                  >
-                    Copy All Terms
-                  </Button>
-                )}
+                <div className="flex gap-2">
+                  {synonyms && (
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        const allTerms = synonyms.terms.flatMap(term => [
+                          ...term.medicalTerms || [],
+                          ...term.commonNames || [],
+                          ...term.relatedConditions || [],
+                          ...term.variations || []
+                        ]).join(", ")
+                        copyToClipboard(allTerms)
+                      }}
+                    >
+                      Copy All Terms
+                    </Button>
+                  )}
+                  
+                  {selectedTerms.length > 0 && (
+                    <Button 
+                      variant="default" 
+                      size="sm"
+                      onClick={searchDatasets}
+                    >
+                      Search Datasets ({selectedTerms.length})
+                    </Button>
+                  )}
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -267,10 +310,14 @@ export default function SynonymsPage() {
                               term.medicalTerms.map((medicalTerm, i) => (
                                 <Badge 
                                   key={i} 
-                                  className="cursor-pointer"
-                                  onClick={() => copyToClipboard(medicalTerm)}
+                                  className={`cursor-pointer ${selectedTerms.includes(medicalTerm) ? 'bg-primary/90' : ''}`}
+                                  onClick={() => toggleTermSelection(medicalTerm)}
+                                  onDoubleClick={() => copyToClipboard(medicalTerm)}
                                 >
                                   {medicalTerm}
+                                  {selectedTerms.includes(medicalTerm) && (
+                                    <span className="ml-1">✓</span>
+                                  )}
                                 </Badge>
                               ))
                             ) : (
@@ -291,10 +338,14 @@ export default function SynonymsPage() {
                                 <Badge 
                                   key={i} 
                                   variant="secondary"
-                                  className="cursor-pointer"
-                                  onClick={() => copyToClipboard(commonName)}
+                                  className={`cursor-pointer ${selectedTerms.includes(commonName) ? 'bg-primary/90 text-primary-foreground' : ''}`}
+                                  onClick={() => toggleTermSelection(commonName)}
+                                  onDoubleClick={() => copyToClipboard(commonName)}
                                 >
                                   {commonName}
+                                  {selectedTerms.includes(commonName) && (
+                                    <span className="ml-1">✓</span>
+                                  )}
                                 </Badge>
                               ))
                             ) : (
@@ -315,10 +366,14 @@ export default function SynonymsPage() {
                                 <Badge 
                                   key={i} 
                                   variant="outline"
-                                  className="cursor-pointer"
-                                  onClick={() => copyToClipboard(relatedCondition)}
+                                  className={`cursor-pointer ${selectedTerms.includes(relatedCondition) ? 'bg-primary/90 text-primary-foreground' : ''}`}
+                                  onClick={() => toggleTermSelection(relatedCondition)}
+                                  onDoubleClick={() => copyToClipboard(relatedCondition)}
                                 >
                                   {relatedCondition}
+                                  {selectedTerms.includes(relatedCondition) && (
+                                    <span className="ml-1">✓</span>
+                                  )}
                                 </Badge>
                               ))
                             ) : (
@@ -339,10 +394,14 @@ export default function SynonymsPage() {
                                 <Badge 
                                   key={i} 
                                   variant="destructive"
-                                  className="cursor-pointer bg-opacity-70"
-                                  onClick={() => copyToClipboard(variation)}
+                                  className={`cursor-pointer bg-opacity-70 ${selectedTerms.includes(variation) ? 'bg-primary/90 text-primary-foreground' : ''}`}
+                                  onClick={() => toggleTermSelection(variation)}
+                                  onDoubleClick={() => copyToClipboard(variation)}
                                 >
                                   {variation}
+                                  {selectedTerms.includes(variation) && (
+                                    <span className="ml-1">✓</span>
+                                  )}
                                 </Badge>
                               ))
                             ) : (
